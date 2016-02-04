@@ -2503,6 +2503,7 @@ extern UniValue importaddress(const UniValue& params, bool fHelp);
 extern UniValue importpubkey(const UniValue& params, bool fHelp);
 extern UniValue dumpwallet(const UniValue& params, bool fHelp);
 extern UniValue importwallet(const UniValue& params, bool fHelp);
+extern UniValue importmulti(const UniValue& params, bool fHelp); //in rpcimportmulti.cpp
 
 const CRPCCommand vWalletRPCCommands[] =
 { //  category              name                        actor (function)           okSafeMode
@@ -2526,6 +2527,7 @@ const CRPCCommand vWalletRPCCommands[] =
     { "wallet",             "gettransaction",           &gettransaction,           false },
     { "wallet",             "getunconfirmedbalance",    &getunconfirmedbalance,    false },
     { "wallet",             "getwalletinfo",            &getwalletinfo,            false },
+    { "wallet",             "importmulti",              &importmulti,              true  },
     { "wallet",             "importprivkey",            &importprivkey,            true  },
     { "wallet",             "importwallet",             &importwallet,             true  },
     { "wallet",             "importaddress",            &importaddress,            true  },
