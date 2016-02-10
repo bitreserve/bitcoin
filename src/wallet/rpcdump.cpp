@@ -25,6 +25,7 @@
 #include <univalue.h>
 
 #include <boost/foreach.hpp>
+#include <boost/assign/list_of.hpp>
 
 using namespace std;
 
@@ -74,6 +75,40 @@ std::string DecodeDumpString(const std::string &str) {
     return ret.str();
 }
 
+bool ImportPrivateKey(const string& strPrivkey, const string& strLabel)
+{
+    CBitcoinSecret vchSecret;
+    bool fGood = vchSecret.SetString(strPrivkey);
+
+    if (!fGood)
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
+
+    CKey key = vchSecret.GetKey();
+    if (!key.IsValid())
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
+
+    CPubKey pubkey = key.GetPubKey();
+    assert(key.VerifyPubKey(pubkey));
+
+    CKeyID vchAddress = pubkey.GetID();
+    pwalletMain->MarkDirty();
+    pwalletMain->SetAddressBook(vchAddress, strLabel, "receive");
+
+    // Don't throw error in case a key is already there
+    if (pwalletMain->HaveKey(vchAddress))
+        return false;
+
+    pwalletMain->mapKeyMetadata[vchAddress].nCreateTime = 1;
+
+    if (!pwalletMain->AddKeyPubKey(key, pubkey))
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
+
+    // whenever a key is imported, we need to scan the whole chain
+    pwalletMain->nTimeFirstKey = 1; // 0 would be considered 'no value'
+
+    return true;
+}
+
 UniValue importprivkey(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
@@ -117,42 +152,17 @@ UniValue importprivkey(const UniValue& params, bool fHelp)
     if (fRescan && fPruneMode)
         throw JSONRPCError(RPC_WALLET_ERROR, "Rescan is disabled in pruned mode");
 
-    CBitcoinSecret vchSecret;
-    bool fGood = vchSecret.SetString(strSecret);
+    bool fExecResult = ImportPrivateKey(strSecret, strLabel);
 
-    if (!fGood) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
-
-    CKey key = vchSecret.GetKey();
-    if (!key.IsValid()) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
-
-    CPubKey pubkey = key.GetPubKey();
-    assert(key.VerifyPubKey(pubkey));
-    CKeyID vchAddress = pubkey.GetID();
-    {
-        pwalletMain->MarkDirty();
-        pwalletMain->SetAddressBook(vchAddress, strLabel, "receive");
-
-        // Don't throw error in case a key is already there
-        if (pwalletMain->HaveKey(vchAddress))
-            return NullUniValue;
-
-        pwalletMain->mapKeyMetadata[vchAddress].nCreateTime = 1;
-
-        if (!pwalletMain->AddKeyPubKey(key, pubkey))
-            throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
-
-        // whenever a key is imported, we need to scan the whole chain
-        pwalletMain->nTimeFirstKey = 1; // 0 would be considered 'no value'
-
-        if (fRescan) {
-            pwalletMain->ScanForWalletTransactions(chainActive.Genesis(), true);
-        }
+    if (fExecResult && fRescan) {
+        pwalletMain->ScanForWalletTransactions(chainActive.Genesis(), true);
     }
 
     return NullUniValue;
 }
 
 void ImportAddress(const CBitcoinAddress& address, const string& strLabel);
+
 void ImportScript(const CScript& script, const string& strLabel, bool isRedeemScript)
 {
     if (!isRedeemScript && ::IsMine(*pwalletMain, script) == ISMINE_SPENDABLE)
@@ -177,6 +187,32 @@ void ImportAddress(const CBitcoinAddress& address, const string& strLabel)
     // add to address book or update label
     if (address.IsValid())
         pwalletMain->SetAddressBook(address.Get(), strLabel, "receive");
+}
+
+bool ImportScriptKey(const string& strScript, const string& strLabel, bool fP2SH)
+{
+    if (IsHex(strScript)) {
+        std::vector<unsigned char> vData(ParseHex(strScript));
+        ImportScript(CScript(vData.begin(), vData.end()), strLabel, fP2SH);
+        return true;
+    }
+    return false;
+}
+
+bool ImportAddressKey(const string& strScript, const string& strLabel)
+{
+    CBitcoinAddress address(strScript);
+    if (address.IsValid()) {
+        ImportAddress(address, strLabel);
+        return true;
+    }
+    return false;
+}
+
+void ImportAddressKey(const string& strScript, const string& strLabel, bool fP2SH)
+{
+    if (!ImportAddressKey(strScript, strLabel) && !ImportScriptKey(strScript, strLabel, fP2SH))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Bitcoin address or script");
 }
 
 UniValue importaddress(const UniValue& params, bool fHelp)
@@ -224,20 +260,11 @@ UniValue importaddress(const UniValue& params, bool fHelp)
 
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
-    CBitcoinAddress address(params[0].get_str());
-    if (address.IsValid()) {
-        if (fP2SH)
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Cannot use the p2sh flag with an address - use a script instead");
-        ImportAddress(address, strLabel);
-    } else if (IsHex(params[0].get_str())) {
-        std::vector<unsigned char> data(ParseHex(params[0].get_str()));
-        ImportScript(CScript(data.begin(), data.end()), strLabel, fP2SH);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Bitcoin address or script");
-    }
+    string strScript = params[0].get_str();
 
-    if (fRescan)
-    {
+    ImportAddressKey(strScript, strLabel, fP2SH);
+
+    if (fRescan) {
         pwalletMain->ScanForWalletTransactions(chainActive.Genesis(), true);
         pwalletMain->ReacceptWalletTransactions();
     }
@@ -348,6 +375,21 @@ UniValue removeprunedfunds(const UniValue& params, bool fHelp)
     return NullUniValue;
 }
 
+void ImportPublicKey(const string& strPubkey, const string& strLabel)
+{
+    if (!IsHex(strPubkey))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey must be a hex string");
+
+    std::vector<unsigned char> data(ParseHex(strPubkey));
+    CPubKey pubKey(data.begin(), data.end());
+
+    if (!pubKey.IsFullyValid())
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey is not a valid public key");
+
+    ImportAddress(CBitcoinAddress(pubKey.GetID()), strLabel);
+    ImportScript(GetScriptForRawPubKey(pubKey), strLabel, false);
+}
+
 UniValue importpubkey(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
@@ -384,17 +426,11 @@ UniValue importpubkey(const UniValue& params, bool fHelp)
     if (fRescan && fPruneMode)
         throw JSONRPCError(RPC_WALLET_ERROR, "Rescan is disabled in pruned mode");
 
-    if (!IsHex(params[0].get_str()))
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey must be a hex string");
-    std::vector<unsigned char> data(ParseHex(params[0].get_str()));
-    CPubKey pubKey(data.begin(), data.end());
-    if (!pubKey.IsFullyValid())
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey is not a valid public key");
+    string strPubKey = params[0].get_str();
 
     LOCK2(cs_main, pwalletMain->cs_wallet);
 
-    ImportAddress(CBitcoinAddress(pubKey.GetID()), strLabel);
-    ImportScript(GetScriptForRawPubKey(pubKey), strLabel, false);
+    ImportPublicKey(strPubKey,strLabel);
 
     if (fRescan)
     {
@@ -614,4 +650,335 @@ UniValue dumpwallet(const UniValue& params, bool fHelp)
     file << "# End of dump\n";
     file.close();
     return NullUniValue;
+}
+
+
+UniValue processImport(const UniValue& data) {
+    // TODO List:
+    // - Use internal flag.
+    // - Use watchonly flag.
+    // - Check consistency between pubkeys/privkeys and scriptPubKey/redeemScript.
+
+    try {
+        bool success = false;
+
+        // Required fields.
+        const UniValue& scriptPubKey = data["scriptPubKey"];
+
+        // Should have script or JSON with "address".
+        if (!(scriptPubKey.getType() == UniValue::VOBJ && scriptPubKey.exists("address")) && !(scriptPubKey.getType() == UniValue::VSTR)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid scriptPubKey");
+        }
+
+        // Optional fields.
+        const string& strRedeemScript = data.exists("redeemscript") ? data["redeemscript"].get_str() : "";
+        const UniValue& pubKeys = data.exists("pubkeys") ? data["pubkeys"].get_array() : UniValue();
+        const UniValue& keys = data.exists("keys") ? data["keys"].get_array() : UniValue();
+        const bool& internal = data.exists("internal") ? data["internal"].get_bool() : false;
+        const bool& watchOnly = data.exists("watchonly") ? data["watchonly"].get_bool() : false;
+        const string& label = data.exists("label") && !internal ? data["label"].get_str() : "";
+        const int64_t& timestamp = data.exists("timestamp") && data["timestamp"].get_int64() > 1 ? data["timestamp"].get_int64() : 1;
+
+        bool isScript = scriptPubKey.getType() == UniValue::VSTR;
+        bool isP2SH = strRedeemScript.length() > 0;
+        const string& output = isScript ? scriptPubKey.get_str() : scriptPubKey["address"].get_str();
+
+        // Parse the output.
+        CScript script;
+        CBitcoinAddress address;
+
+        if (!isScript) {
+            address = CBitcoinAddress(output);
+            script = GetScriptForDestination(address.Get());
+        } else {
+            if (!IsHex(output)) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid scriptPubKey");
+            }
+
+            std::vector<unsigned char> vData(ParseHex(output));
+            script = CScript(vData.begin(), vData.end());
+        }
+
+        // Checks. //
+
+        // Keys / PubKeys size check.
+        if (!isP2SH && (keys.size() > 1 || pubKeys.size() > 1)) { // Address / scriptPubKey
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "More than private key given for one address");
+        }
+
+        // Invalid P2SH redeemScript
+        if (isP2SH && !IsHex(strRedeemScript)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid redeem script");
+        }
+
+        // Process. //
+
+        // P2SH
+        if (isP2SH) {
+            // TODO: check consistency between private keys and p2sh redeemscript + p2sh address
+
+            // Import redeem script.
+            std::vector<unsigned char> vData(ParseHex(strRedeemScript));
+            CScript redeemScript = CScript(vData.begin(), vData.end());
+
+            // Invalid P2SH address
+            if (!script.IsPayToScriptHash()) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid P2SH address / script");
+            }
+
+            pwalletMain->MarkDirty();
+
+            if (!pwalletMain->HaveWatchOnly(redeemScript) && !pwalletMain->AddWatchOnly(redeemScript))
+                throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+
+            if (!pwalletMain->HaveCScript(redeemScript) && !pwalletMain->AddCScript(redeemScript))
+                throw JSONRPCError(RPC_WALLET_ERROR, "Error adding p2sh redeemScript to wallet");
+
+            CBitcoinAddress redeemAddress = CBitcoinAddress(CScriptID(redeemScript));
+            CScript redeemDestination = GetScriptForDestination(redeemAddress.Get());
+
+            if (::IsMine(*pwalletMain, redeemDestination) == ISMINE_SPENDABLE)
+                throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
+
+            pwalletMain->MarkDirty();
+
+            if (!pwalletMain->HaveWatchOnly(redeemDestination) && !pwalletMain->AddWatchOnly(redeemDestination))
+                throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+
+            // add to address book or update label
+            if (address.IsValid())
+                pwalletMain->SetAddressBook(address.Get(), label, "receive");
+
+            // Import private keys.
+            if (keys.size()) {
+                for (size_t i = 0; i < keys.size(); i++) {
+                    const string& privkey = keys[i].get_str();
+
+                    CBitcoinSecret vchSecret;
+                    bool fGood = vchSecret.SetString(privkey);
+
+                    if (!fGood)
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
+
+                    CKey key = vchSecret.GetKey();
+
+                    if (!key.IsValid())
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
+
+                    CPubKey pubkey = key.GetPubKey();
+                    assert(key.VerifyPubKey(pubkey));
+
+                    CKeyID vchAddress = pubkey.GetID();
+                    pwalletMain->MarkDirty();
+                    pwalletMain->SetAddressBook(vchAddress, label, "receive");
+
+                    if (pwalletMain->HaveKey(vchAddress))
+                        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Already have this key");
+                    ;
+
+                    pwalletMain->mapKeyMetadata[vchAddress].nCreateTime = timestamp;
+
+                    if (!pwalletMain->AddKeyPubKey(key, pubkey))
+                        throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
+
+                    if (timestamp < pwalletMain->nTimeFirstKey) {
+                        pwalletMain->nTimeFirstKey = timestamp;
+                    }
+                }
+            }
+
+            success = true;
+        } else {
+            // TODO: check consistency between private/public keys and scriptPubKey / address
+
+            // Import public keys.
+            if (pubKeys.size() && keys.size() == 0) {
+                const string& strPubKey = pubKeys[0].get_str();
+                if (!IsHex(strPubKey))
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey must be a hex string");
+
+                std::vector<unsigned char> data(ParseHex(strPubKey));
+                CPubKey pubKey(data.begin(), data.end());
+
+                if (!pubKey.IsFullyValid())
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Pubkey is not a valid public key");
+
+                CBitcoinAddress pubKeyAddress = CBitcoinAddress(pubKey.GetID());
+                CScript pubKeyScript = GetScriptForDestination(pubKeyAddress.Get());
+
+                if (::IsMine(*pwalletMain, pubKeyScript) == ISMINE_SPENDABLE)
+                    throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
+
+                pwalletMain->MarkDirty();
+
+                if (!pwalletMain->HaveWatchOnly(pubKeyScript) && !pwalletMain->AddWatchOnly(pubKeyScript))
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+
+                // add to address book or update label
+                if (pubKeyAddress.IsValid())
+                    pwalletMain->SetAddressBook(pubKeyAddress.Get(), label, "receive");
+
+                // TODO Is this necessary?
+                CScript scriptRawPubKey = GetScriptForRawPubKey(pubKey);
+
+                if (::IsMine(*pwalletMain, scriptRawPubKey) == ISMINE_SPENDABLE)
+                    throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
+
+                pwalletMain->MarkDirty();
+
+                if (!pwalletMain->HaveWatchOnly(scriptRawPubKey) && !pwalletMain->AddWatchOnly(scriptRawPubKey))
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+
+                success = true;
+            }
+
+            // Import private keys.
+            if (keys.size()) {
+                const string& strPrivkey = keys[0].get_str();
+
+                // Checks.
+                CBitcoinSecret vchSecret;
+                bool fGood = vchSecret.SetString(strPrivkey);
+
+                if (!fGood)
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
+
+                CKey key = vchSecret.GetKey();
+                if (!key.IsValid())
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
+
+                CPubKey pubkey = key.GetPubKey();
+                assert(key.VerifyPubKey(pubkey));
+
+                CKeyID vchAddress = pubkey.GetID();
+                pwalletMain->MarkDirty();
+                pwalletMain->SetAddressBook(vchAddress, label, "receive");
+
+                if (pwalletMain->HaveKey(vchAddress))
+                    return false;
+
+                pwalletMain->mapKeyMetadata[vchAddress].nCreateTime = timestamp;
+
+                if (!pwalletMain->AddKeyPubKey(key, pubkey))
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
+
+                if (timestamp < pwalletMain->nTimeFirstKey) {
+                    pwalletMain->nTimeFirstKey = timestamp;
+                }
+
+                success = true;
+            }
+
+            // Import scriptPubKey only.
+            if (pubKeys.size() == 0 && keys.size() == 0) {
+                if (::IsMine(*pwalletMain, script) == ISMINE_SPENDABLE)
+                    throw JSONRPCError(RPC_WALLET_ERROR, "The wallet already contains the private key for this address or script");
+
+                pwalletMain->MarkDirty();
+
+                if (!pwalletMain->HaveWatchOnly(script) && !pwalletMain->AddWatchOnly(script))
+                    throw JSONRPCError(RPC_WALLET_ERROR, "Error adding address to wallet");
+
+                if (scriptPubKey.getType() == UniValue::VOBJ) {
+                    // add to address book or update label
+                    if (address.IsValid())
+                        pwalletMain->SetAddressBook(address.Get(), label, "receive");
+                }
+
+                success = true;
+            }
+        }
+
+        UniValue result = UniValue(UniValue::VOBJ);
+        result.pushKV("success", UniValue(success));
+        return result;
+    } catch (const UniValue& e) {
+        UniValue result = UniValue(UniValue::VOBJ);
+        result.pushKV("success", UniValue(false));
+        result.pushKV("error", e);
+        return result;
+    } catch (...) {
+        UniValue result = UniValue(UniValue::VOBJ);
+        result.pushKV("success", UniValue(false));
+        result.pushKV("error", JSONRPCError(RPC_MISC_ERROR, "Missing required fields"));
+        return result;
+    }
+}
+
+UniValue importmulti(const UniValue& params, bool fHelp)
+{
+    // clang-format off
+    if (fHelp || params.size() < 1 || params.size() > 2)
+        throw runtime_error(
+            "importmulti '[{\"type\":\"privkey\",\"value\":\"mkjjX...\"},...]' (rescan) \n\n"
+            "Import several types of addresses (private and public keys, transaction addresses/scripts) with only one rescan\n"
+
+            "Arguments:\n"
+            "1. json request array     (json, required) Data to be imported\n"
+            "  [     (json array of json objects)\n"
+            "    {\n"
+            "      \"type\": \"privkey | pubkey | address | script\", (string, required) Type of address\n"
+            "      \"value\": \"...\",                                (string, required) Value of the address\n"
+            "      \"timestamp\": 1454686740,                         (integer, optional) Timestamp\n"
+            "      \"label\": \"...\"                                 (string, optional) Label\n"
+            "    }\n"
+            "  ,...\n"
+            "  ]\n"
+            "2. json options                 (json, optional)\n"
+
+            "\nExamples:\n" +
+            HelpExampleCli("importmulti", "'[ { \"type\":\"privkey\", \"value\":\"<my private key>\", \"timestamp\":1455191478 },"
+                                          "{ \"type\":\"pubkey\", \"value\":\"<my public key>\", \"label\":\"example 1\", \"timestamp\":1455191480 } ]'") +
+            HelpExampleCli("importmulti", "'[{ \"type\":\"pubkey\", \"value\":\"<my public key>\", \"label\":\"example 1\", \"timestamp\":1455191464 } ]' '{\"rescan\":false}'") +
+            HelpExampleRpc("importmulti", "[ { \"type\":\"privkey\", \"value\":\"<my private key>\" },"
+                                          "{ \"type\":\"pubkey\", \"value\":\"<my public key>\", \"label\":\"example 1\", \"timestamp\":1455191480 } ]") +
+            HelpExampleRpc("importmulti", "'[{ \"type\":\"pubkey\", \"value\":\"<my public key>\", \"label\":\"example 1\", \"timestamp\":1455191464 } ]', '{\"rescan\":false}'") +
+
+            "\nResponse is an array with the same size as the input that has the execution result :\n"
+            "  [ { \"success\": true | false } , ... ]\n");
+    // clang-format on
+    if (!EnsureWalletIsAvailable(fHelp))
+        return NullUniValue;
+
+    RPCTypeCheck(params, boost::assign::list_of(UniValue::VARR)(UniValue::VOBJ));
+
+    const UniValue& request = params[0];
+
+    //Default options
+    bool fRescan = true;
+
+    if (params.size() > 1) {
+        const UniValue& options = params[1];
+        if (options.exists("rescan"))
+            fRescan = options["rescan"].get_bool();
+    }
+
+    LOCK2(cs_main, pwalletMain->cs_wallet);
+    EnsureWalletIsUnlocked();
+
+    bool fRunScan = false;
+    int64_t nLowestTimestamp = 0;
+
+    if (fRescan && chainActive.Tip())
+        nLowestTimestamp = chainActive.Tip()->GetBlockTime();
+    else
+        fRescan = false;
+
+    UniValue response(UniValue::VARR);
+
+    BOOST_FOREACH (const UniValue& data, request.getValues()) {
+        const UniValue result = processImport(data);
+        response.push_back(result);
+    }
+
+    if (fRescan && fRunScan && request.size()) {
+        CBlockIndex* pindex = nLowestTimestamp > 0 ? chainActive.FindLatestBefore(nLowestTimestamp) : chainActive.Genesis();
+
+        if (pindex) {
+            pwalletMain->ScanForWalletTransactions(pindex, true);
+            pwalletMain->ReacceptWalletTransactions();
+        }
+    }
+
+    return response;
 }
