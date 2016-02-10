@@ -61,6 +61,20 @@ const CBlockIndex *CChain::FindFork(const CBlockIndex *pindex) const {
     return pindex;
 }
 
+
+struct SmallerThanTimestamp {
+    bool operator()(CBlockIndex* pBlock, const int64_t& time) const
+    {
+        return pBlock->GetBlockTime() < time;
+    }
+};
+
+CBlockIndex* CChain::FindLatestBefore(int64_t nTime) const
+{
+    std::vector<CBlockIndex*>::const_iterator lower = std::lower_bound(vChain.begin(), vChain.end(), nTime, SmallerThanTimestamp());
+    return (lower == vChain.end() ? NULL : *lower);
+}
+
 /** Turn the lowest '1' bit in the binary representation of a number into a '0'. */
 int static inline InvertLowestOne(int n) { return n & (n - 1); }
 
