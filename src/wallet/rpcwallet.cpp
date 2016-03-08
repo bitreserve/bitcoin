@@ -2323,7 +2323,7 @@ UniValue listunspent(const UniValue& params, bool fHelp)
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
 
-    if (fHelp || params.size() > 3)
+    if (fHelp || params.size() > 4)
         throw runtime_error(
             "listunspent ( minconf maxconf  [\"address\",...] )\n"
             "\nReturns array of unspent transaction outputs\n"
@@ -2339,6 +2339,11 @@ UniValue listunspent(const UniValue& params, bool fHelp)
             "      \"address\"   (string) bitcoin address\n"
             "      ,...\n"
             "    ]\n"
+            "4. options          (json, optional) JSON with execution options\n"
+            "    {\n"
+            "      \"withaddressinfo\": true | false , (bool, default=true) With address information in the output\n"
+            "      \"includezerovalue\": true | false   (bool, default=true) Include zero value UTXOs\n"
+            "    }\n"
             "\nResult\n"
             "[                   (array of json object)\n"
             "  {\n"
@@ -2383,11 +2388,24 @@ UniValue listunspent(const UniValue& params, bool fHelp)
         }
     }
 
+    bool fWithAddressInfo = true;
+    bool fIncludeZeroValue = true;
+
+    if (params.size() > 3) {
+        const UniValue& options = params[3].get_obj();
+
+        if (options.exists("withaddressinfo"))
+            fWithAddressInfo = options["withaddressinfo"].get_bool();
+
+        if (options.exists("includezerovalue"))
+            fIncludeZeroValue = options["includezerovalue"].get_bool();
+    }
+
     UniValue results(UniValue::VARR);
     vector<COutput> vecOutputs;
     assert(pwalletMain != NULL);
     LOCK2(cs_main, pwalletMain->cs_wallet);
-    pwalletMain->AvailableCoins(vecOutputs, false, NULL, true);
+    pwalletMain->AvailableCoins(vecOutputs, false, NULL, fIncludeZeroValue);
     BOOST_FOREACH(const COutput& out, vecOutputs) {
         if (out.nDepth < nMinDepth || out.nDepth > nMaxDepth)
             continue;
@@ -2407,10 +2425,12 @@ UniValue listunspent(const UniValue& params, bool fHelp)
         entry.push_back(Pair("txid", out.tx->GetHash().GetHex()));
         entry.push_back(Pair("vout", out.i));
         CTxDestination address;
-        if (ExtractDestination(out.tx->vout[out.i].scriptPubKey, address)) {
-            entry.push_back(Pair("address", CBitcoinAddress(address).ToString()));
-            if (pwalletMain->mapAddressBook.count(address))
-                entry.push_back(Pair("account", pwalletMain->mapAddressBook[address].name));
+        if (fWithAddressInfo) {
+            if (ExtractDestination(out.tx->vout[out.i].scriptPubKey, address)) {
+                entry.push_back(Pair("address", CBitcoinAddress(address).ToString()));
+                if (pwalletMain->mapAddressBook.count(address))
+                    entry.push_back(Pair("account", pwalletMain->mapAddressBook[address].name));
+            }
         }
         entry.push_back(Pair("scriptPubKey", HexStr(pk.begin(), pk.end())));
         if (pk.IsPayToScriptHash()) {
