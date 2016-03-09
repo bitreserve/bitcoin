@@ -10,6 +10,10 @@
 #include "streams.h"
 #include "util.h"
 
+#if ENABLE_WALLET
+#include "zmqpublishwalletnotifier.h"
+#endif
+
 void zmqError(const char *str)
 {
     LogPrint("zmq", "zmq: Error: %s, errno=%s\n", str, zmq_strerror(errno));
@@ -39,6 +43,11 @@ CZMQNotificationInterface* CZMQNotificationInterface::CreateWithArguments(const 
     factories["pubhashtx"] = CZMQAbstractNotifier::Create<CZMQPublishHashTransactionNotifier>;
     factories["pubrawblock"] = CZMQAbstractNotifier::Create<CZMQPublishRawBlockNotifier>;
     factories["pubrawtx"] = CZMQAbstractNotifier::Create<CZMQPublishRawTransactionNotifier>;
+
+#if ENABLE_WALLET
+    factories["pubwallethashtx"] = CZMQAbstractNotifier::Create<CZMQPublishWalletHashTransactionNotifier>;
+    factories["pubwalletrawtx"] = CZMQAbstractNotifier::Create<CZMQPublishWalletRawTransactionNotifier>;
+#endif
 
     for (std::map<std::string, CZMQNotifierFactory>::const_iterator i=factories.begin(); i!=factories.end(); ++i)
     {

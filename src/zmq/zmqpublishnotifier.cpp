@@ -9,46 +9,6 @@
 
 static std::multimap<std::string, CZMQAbstractPublishNotifier*> mapPublishNotifiers;
 
-// Internal function to send multipart message
-static int zmq_send_multipart(void *sock, const void* data, size_t size, ...)
-{
-    va_list args;
-    va_start(args, size);
-
-    while (1)
-    {
-        zmq_msg_t msg;
-
-        int rc = zmq_msg_init_size(&msg, size);
-        if (rc != 0)
-        {
-            zmqError("Unable to initialize ZMQ msg");
-            return -1;
-        }
-
-        void *buf = zmq_msg_data(&msg);
-        memcpy(buf, data, size);
-
-        data = va_arg(args, const void*);
-
-        rc = zmq_msg_send(&msg, sock, data ? ZMQ_SNDMORE : 0);
-        if (rc == -1)
-        {
-            zmqError("Unable to send ZMQ msg");
-            zmq_msg_close(&msg);
-            return -1;
-        }
-
-        zmq_msg_close(&msg);
-
-        if (!data)
-            break;
-
-        size = va_arg(args, size_t);
-    }
-    return 0;
-}
-
 bool CZMQAbstractPublishNotifier::Initialize(void *pcontext)
 {
     assert(!psocket);

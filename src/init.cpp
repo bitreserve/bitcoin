@@ -425,6 +425,13 @@ std::string HelpMessage(HelpMessageMode mode)
     strUsage += HelpMessageOpt("-zmqpubrawtx=<address>", _("Enable publish raw transaction in <address>"));
 #endif
 
+#ifdef ENABLE_WALLET
+#if ENABLE_ZMQ
+    strUsage += HelpMessageOpt("-zmqpubwalletrawtx=<address>", _("Enable publish wallet raw transaction in <address>"));
+    strUsage += HelpMessageOpt("-zmqpubwallethashtx=<address>", _("Enable publish wallet hash transaction in <address>"));
+#endif
+#endif
+
     strUsage += HelpMessageGroup(_("Debugging/Testing options:"));
     strUsage += HelpMessageOpt("-uacomment=<cmt>", _("Append comment to the user agent string"));
     if (showDebug)
