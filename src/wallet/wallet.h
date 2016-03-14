@@ -626,7 +626,9 @@ public:
         fBroadcastTransactions = false;
     }
 
-    std::map<uint256, CWalletTx> mapWallet;
+    typedef std::map<uint256, CWalletTx> WALLET_MAP_TYPE;
+
+    WALLET_MAP_TYPE mapWallet;
     std::list<CAccountingEntry> laccentries;
 
     typedef std::pair<CWalletTx*, CAccountingEntry*> TxPair;
