@@ -28,6 +28,14 @@
 
 #include <boost/shared_ptr.hpp>
 
+#include <boost/unordered_map.hpp>
+std::size_t hash_value( const uint256 & p) {
+    std::size_t seed = 0;
+    boost::hash_combine(seed, ToByteVector(p));
+    return seed;
+}
+
+
 /**
  * Settings
  */
@@ -626,7 +634,7 @@ public:
         fBroadcastTransactions = false;
     }
 
-    typedef std::map<uint256, CWalletTx> WALLET_MAP_TYPE;
+    typedef boost::unordered_map<uint256, CWalletTx> WALLET_MAP_TYPE;
 
     WALLET_MAP_TYPE mapWallet;
     std::list<CAccountingEntry> laccentries;
