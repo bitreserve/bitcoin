@@ -112,3 +112,10 @@ bool CBasicKeyStore::HaveWatchOnly() const
     LOCK(cs_KeyStore);
     return (!setWatchOnly.empty());
 }
+
+std::size_t hash_value(const CScript& p)
+{
+    std::size_t seed = 0;
+    boost::hash_combine(seed, ToByteVector(p));
+    return seed;
+}

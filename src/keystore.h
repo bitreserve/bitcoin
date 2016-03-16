@@ -14,6 +14,11 @@
 
 #include <boost/signals2/signal.hpp>
 #include <boost/variant.hpp>
+#include <boost/unordered_set.hpp>
+
+// Definition of hash_value for CScript (to be used in boost::unordered_set)
+std::size_t hash_value(const CScript& p);
+
 
 /** A virtual base class for key stores */
 class CKeyStore
@@ -49,7 +54,7 @@ public:
 typedef std::map<CKeyID, CKey> KeyMap;
 typedef std::map<CKeyID, CPubKey> WatchKeyMap;
 typedef std::map<CScriptID, CScript > ScriptMap;
-typedef std::set<CScript> WatchOnlySet;
+typedef boost::unordered_set<CScript> WatchOnlySet;
 
 /** Basic key store, that keeps keys in an address->secret map */
 class CBasicKeyStore : public CKeyStore
