@@ -161,7 +161,7 @@ CBitcoinAddress GetAccountAddress(string strAccount, bool bForceNew=false)
         else {
             // Check if the current key has been used
             CScript scriptPubKey = GetScriptForDestination(account.vchPubKey.GetID());
-            for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin();
+            for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin();
                  it != pwalletMain->mapWallet.end() && account.vchPubKey.IsValid();
                  ++it)
                 BOOST_FOREACH(const CTxOut& txout, (*it).second.vout)
@@ -604,7 +604,7 @@ UniValue getreceivedbyaddress(const UniValue& params, bool fHelp)
 
     // Tally
     CAmount nAmount = 0;
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
     {
         const CWalletTx& wtx = (*it).second;
         if (wtx.IsCoinBase() || !CheckFinalTx(wtx))
@@ -658,7 +658,7 @@ UniValue getreceivedbyaccount(const UniValue& params, bool fHelp)
 
     // Tally
     CAmount nAmount = 0;
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
     {
         const CWalletTx& wtx = (*it).second;
         if (wtx.IsCoinBase() || !CheckFinalTx(wtx))
@@ -682,7 +682,7 @@ CAmount GetAccountBalance(CWalletDB& walletdb, const string& strAccount, int nMi
     CAmount nBalance = 0;
 
     // Tally wallet transactions
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
     {
         const CWalletTx& wtx = (*it).second;
         if (!CheckFinalTx(wtx) || wtx.GetBlocksToMaturity() > 0 || wtx.GetDepthInMainChain() < 0)
@@ -754,7 +754,7 @@ UniValue getbalance(const UniValue& params, bool fHelp)
         // (GetBalance() sums up all unspent TxOuts)
         // getbalance and "getbalance * 1 true" should return the same number
         CAmount nBalance = 0;
-        for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+        for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
         {
             const CWalletTx& wtx = (*it).second;
             if (!CheckFinalTx(wtx) || wtx.GetBlocksToMaturity() > 0 || wtx.GetDepthInMainChain() < 0)
@@ -1133,7 +1133,7 @@ UniValue ListReceived(const UniValue& params, bool fByAccounts)
 
     // Tally
     map<CBitcoinAddress, tallyitem> mapTally;
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
     {
         const CWalletTx& wtx = (*it).second;
 
@@ -1577,7 +1577,7 @@ UniValue listaccounts(const UniValue& params, bool fHelp)
             mapAccountBalances[entry.second.name] = 0;
     }
 
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); ++it)
     {
         const CWalletTx& wtx = (*it).second;
         CAmount nFee;
@@ -1686,7 +1686,7 @@ UniValue listsinceblock(const UniValue& params, bool fHelp)
 
     UniValue transactions(UniValue::VARR);
 
-    for (map<uint256, CWalletTx>::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); it++)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwalletMain->mapWallet.begin(); it != pwalletMain->mapWallet.end(); it++)
     {
         CWalletTx tx = (*it).second;
 

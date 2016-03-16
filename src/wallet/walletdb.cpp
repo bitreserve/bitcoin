@@ -263,7 +263,7 @@ DBErrors CWalletDB::ReorderTransactions(CWallet* pwallet)
     typedef multimap<int64_t, TxPair > TxItems;
     TxItems txByTime;
 
-    for (map<uint256, CWalletTx>::iterator it = pwallet->mapWallet.begin(); it != pwallet->mapWallet.end(); ++it)
+    for (CWallet::WALLET_MAP_TYPE::iterator it = pwallet->mapWallet.begin(); it != pwallet->mapWallet.end(); ++it)
     {
         CWalletTx* wtx = &((*it).second);
         txByTime.insert(make_pair(wtx->nTimeReceived, TxPair(wtx, (CAccountingEntry*)0)));
