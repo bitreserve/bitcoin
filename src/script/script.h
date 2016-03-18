@@ -461,6 +461,17 @@ public:
         return *this;
     }
 
+    bool operator<(const CScript& other) const
+    {
+        if (size() < other.size()) {
+            return true;
+        }
+        if (size() > other.size()) {
+            return false;
+        }
+        return memcmp(this, &other, size()) < 0;
+    }
+
     CScript& operator<<(const CScript& b)
     {
         // I'm not sure if this should push the script or concatenate scripts.
