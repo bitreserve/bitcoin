@@ -118,6 +118,7 @@ testScripts = [
     'abandonconflict.py',
     'p2p-versionbits-warning.py',
     'importprunedfunds.py',
+    'listunspent.py',
 ]
 testScriptsExt = [
     'bip9-softforks.py',
