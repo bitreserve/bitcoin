@@ -963,7 +963,7 @@ isminetype CWallet::IsMine(const CTxIn &txin) const
         {
             const CWalletTx& prev = (*mi).second;
             if (txin.prevout.n < prev.vout.size())
-                return IsMine(prev.vout[txin.prevout.n]);
+                return IsMine(txin.prevout);
         }
     }
     return ISMINE_NO;
@@ -1720,9 +1720,12 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
                 continue;
 
             for (unsigned int i = 0; i < pcoin->vout.size(); i++) {
-                isminetype mine = IsMine(pcoin->vout[i]);
-                if (!(IsSpent(wtxid, i)) && mine != ISMINE_NO &&
-                    !IsLockedCoin((*it).first, i) && (pcoin->vout[i].nValue > 0 || fIncludeZeroValue) &&
+                COutPoint outpoint(wtxid, i);
+                isminetype mine = IsMine(outpoint);
+                if (mine != ISMINE_NO &&
+                    !(IsSpent(wtxid, i)) &&
+                    !IsLockedCoin((*it).first, i) &&
+                    (pcoin->vout[i].nValue > 0 || fIncludeZeroValue) &&
                     (!coinControl || !coinControl->HasSelected() || coinControl->fAllowOtherInputs || coinControl->IsSelected(COutPoint((*it).first, i))))
                         vCoins.push_back(COutput(pcoin, i, nDepth,
                                                  ((mine & ISMINE_SPENDABLE) != ISMINE_NO) ||
@@ -2691,7 +2694,7 @@ std::map<CTxDestination, CAmount> CWallet::GetAddressBalances()
             for (unsigned int i = 0; i < pcoin->vout.size(); i++)
             {
                 CTxDestination addr;
-                if (!IsMine(pcoin->vout[i]))
+                if (!IsMine(COutPoint(pcoin->GetHash(), i)))
                     continue;
                 if(!ExtractDestination(pcoin->vout[i].scriptPubKey, addr))
                     continue;
@@ -2754,7 +2757,7 @@ set< set<CTxDestination> > CWallet::GetAddressGroupings()
 
         // group lone addrs by themselves
         for (unsigned int i = 0; i < pcoin->vout.size(); i++)
-            if (IsMine(pcoin->vout[i]))
+            if (IsMine(COutPoint(pcoin->GetHash(), i)))
             {
                 CTxDestination address;
                 if(!ExtractDestination(pcoin->vout[i].scriptPubKey, address))
