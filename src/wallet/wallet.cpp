@@ -126,6 +126,8 @@ bool CWallet::AddKeyPubKey(const CKey& secret, const CPubKey &pubkey)
     if (HaveWatchOnly(script))
         RemoveWatchOnly(script);
 
+    UpdateOutPointsIndex();
+
     if (!fFileBacked)
         return true;
     if (!IsCrypted()) {
@@ -458,6 +460,25 @@ void CWallet::SyncMetaData(pair<TxSpends::iterator, TxSpends::iterator> range)
     }
 }
 
+void CWallet::UpdateOutPointsIndex()
+{
+    for (std::map<COutPoint, std::pair<CTxOut, isminetype>>::const_iterator it = mapOutPoints.begin(); it != mapOutPoints.end(); ++it)
+    {
+        mapOutPoints[it->first].second = IsMine(it->second.first);
+    }
+}
+
+void CWallet::AddOutPointsToIndex(const CWalletTx &wtx)
+{
+    for (int i = 0; i < wtx.vout.size(); i++)
+    {
+        const CTxOut txout = wtx.vout[i];
+        const COutPoint outpoint(wtx.GetHash(), i);
+
+        mapOutPoints[outpoint] = make_pair(txout, IsMine(txout));
+    }
+}
+
 /**
  * Outpoint is spent if any non-conflicted transaction
  * spends it:
@@ -635,6 +656,8 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn, bool fFromLoadWallet, CWalletD
                 }
             }
         }
+
+        AddOutPointsToIndex(wtx);
     }
     else
     {
@@ -695,6 +718,8 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn, bool fFromLoadWallet, CWalletD
                              wtxIn.hashBlock.ToString());
             }
             AddToSpends(hash);
+
+            AddOutPointsToIndex(wtx);
         }
 
         bool fUpdated = false;
@@ -953,7 +978,7 @@ CAmount CWallet::GetDebit(const CTxIn &txin, const isminefilter& filter) const
         {
             const CWalletTx& prev = (*mi).second;
             if (txin.prevout.n < prev.vout.size())
-                if (IsMine(prev.vout[txin.prevout.n]) & filter)
+                if (IsMine(txin.prevout) & filter)
                     return prev.vout[txin.prevout.n].nValue;
         }
     }
@@ -963,6 +988,16 @@ CAmount CWallet::GetDebit(const CTxIn &txin, const isminefilter& filter) const
 isminetype CWallet::IsMine(const CTxOut& txout) const
 {
     return ::IsMine(*this, txout.scriptPubKey);
+}
+
+isminetype CWallet::IsMine(const COutPoint &outpoint) const
+{
+    const std::map<COutPoint, std::pair<CTxOut, isminetype>>::const_iterator it = mapOutPoints.find(outpoint);
+    if (it != mapOutPoints.end()) {
+        return it->second.second;
+    }
+
+    return ISMINE_NO;
 }
 
 CAmount CWallet::GetCredit(const CTxOut& txout, const isminefilter& filter) const
@@ -3199,6 +3234,9 @@ bool CWallet::InitLoadWallet()
             }
         }
     }
+
+    walletInstance->UpdateOutPointsIndex();
+
     walletInstance->SetBroadcastTransactions(GetBoolArg("-walletbroadcast", DEFAULT_WALLETBROADCAST));
 
     pwalletMain = walletInstance;
