@@ -169,6 +169,8 @@ bool CWallet::AddKeyPubKey(const CKey& secret, const CPubKey &pubkey)
     if (HaveWatchOnly(script))
         RemoveWatchOnly(script);
 
+    AddScriptPubKeyToCache(pubkey);
+
     if (!fFileBacked)
         return true;
     if (!IsCrypted()) {
@@ -179,11 +181,21 @@ bool CWallet::AddKeyPubKey(const CKey& secret, const CPubKey &pubkey)
     return true;
 }
 
+bool CWallet::LoadKey(const CKey &key, const CPubKey &pubkey)
+{
+    AddScriptPubKeyToCache(pubkey);
+
+    return CCryptoKeyStore::AddKeyPubKey(key, pubkey);
+}
+
 bool CWallet::AddCryptedKey(const CPubKey &vchPubKey,
                             const vector<unsigned char> &vchCryptedSecret)
 {
     if (!CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret))
         return false;
+
+    AddScriptPubKeyToCache(vchPubKey);
+
     if (!fFileBacked)
         return true;
     {
@@ -207,11 +219,16 @@ bool CWallet::LoadKeyMetadata(const CPubKey &pubkey, const CKeyMetadata &meta)
         nTimeFirstKey = meta.nCreateTime;
 
     mapKeyMetadata[pubkey.GetID()] = meta;
+
+    AddScriptPubKeyToCache(pubkey);
+
     return true;
 }
 
 bool CWallet::LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret)
 {
+    AddScriptPubKeyToCache(vchPubKey);
+
     return CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret);
 }
 
@@ -219,6 +236,9 @@ bool CWallet::AddCScript(const CScript& redeemScript)
 {
     if (!CCryptoKeyStore::AddCScript(redeemScript))
         return false;
+
+    AddScriptToCache(redeemScript);
+
     if (!fFileBacked)
         return true;
     return CWalletDB(strWalletFile).WriteCScript(Hash160(redeemScript), redeemScript);
@@ -237,6 +257,8 @@ bool CWallet::LoadCScript(const CScript& redeemScript)
         return true;
     }
 
+    AddScriptToCache(redeemScript);
+
     return CCryptoKeyStore::AddCScript(redeemScript);
 }
 
@@ -246,6 +268,9 @@ bool CWallet::AddWatchOnly(const CScript &dest)
         return false;
     nTimeFirstKey = 1; // No birthday information for watch-only keys.
     NotifyWatchonlyChanged(true);
+
+    AddScriptToCache(dest);
+
     if (!fFileBacked)
         return true;
     return CWalletDB(strWalletFile).WriteWatchOnly(dest);
@@ -267,6 +292,8 @@ bool CWallet::RemoveWatchOnly(const CScript &dest)
 
 bool CWallet::LoadWatchOnly(const CScript &dest)
 {
+    AddScriptToCache(dest);
+
     return CCryptoKeyStore::AddWatchOnly(dest);
 }
 
@@ -499,6 +526,32 @@ void CWallet::SyncMetaData(pair<TxSpends::iterator, TxSpends::iterator> range)
         copyTo->strFromAccount = copyFrom->strFromAccount;
         // nOrderPos not copied on purpose
         // cached members not copied on purpose
+    }
+}
+
+void CWallet::AddScriptToCache(const CScript &script)
+{
+    mapScriptsCache[script] = ::IsMine(*this, script);
+}
+
+void CWallet::AddScriptPubKeyToCache(const CPubKey &pubkey)
+{
+    AddScriptToCache(GetScriptForRawPubKey(pubkey));
+    AddScriptToCache(GetScriptForDestination(pubkey.GetID()));
+}
+
+void CWallet::RemoveCachedScript(const CScript &script)
+{
+    for (std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.find(script); it != mapScriptsCache.end(); ++it) {
+        mapScriptsCache.erase(it);
+    }
+}
+
+void CWallet::InvalidateCachedScripts()
+{
+    for (std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.begin(); it != mapScriptsCache.end(); ++it)
+    {
+        mapScriptsCache[it->first] = ::IsMine(*this, it->first);
     }
 }
 
@@ -1077,6 +1130,16 @@ CAmount CWallet::GetDebit(const CTxIn &txin, const isminefilter& filter) const
 isminetype CWallet::IsMine(const CTxOut& txout) const
 {
     return ::IsMine(*this, txout.scriptPubKey);
+}
+
+isminetype CWallet::IsMine(const CScript &script) const
+{
+    const std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.find(script);
+    if (it != mapScriptsCache.end()) {
+        return it->second;
+    }
+
+    return ISMINE_NO;
 }
 
 CAmount CWallet::GetCredit(const CTxOut& txout, const isminefilter& filter) const
@@ -3385,6 +3448,9 @@ bool CWallet::InitLoadWallet()
             }
         }
     }
+
+    walletInstance->InvalidateCachedScripts();
+
     walletInstance->SetBroadcastTransactions(GetBoolArg("-walletbroadcast", DEFAULT_WALLETBROADCAST));
 
     pwalletMain = walletInstance;

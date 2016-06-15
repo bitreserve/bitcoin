@@ -633,6 +633,16 @@ public:
         fBroadcastTransactions = false;
     }
 
+    /**
+     * Keep the isminetype of each CScript cached.
+     * Everytime a script is added/changed, the value is updated.
+     */
+    std::map<CScript, isminetype> mapScriptsCache;
+    void AddScriptToCache(const CScript& script);
+    void AddScriptPubKeyToCache(const CPubKey& pubkey);
+    void RemoveCachedScript(const CScript& script);
+    void InvalidateCachedScripts();
+
     std::map<uint256, CWalletTx> mapWallet;
     std::list<CAccountingEntry> laccentries;
 
@@ -685,7 +695,7 @@ public:
     //! Adds a key to the store, and saves it to disk.
     bool AddKeyPubKey(const CKey& key, const CPubKey &pubkey);
     //! Adds a key to the store, without saving it to disk (used by LoadWallet)
-    bool LoadKey(const CKey& key, const CPubKey &pubkey) { return CCryptoKeyStore::AddKeyPubKey(key, pubkey); }
+    bool LoadKey(const CKey& key, const CPubKey &pubkey);
     //! Load metadata (used by LoadWallet)
     bool LoadKeyMetadata(const CPubKey &pubkey, const CKeyMetadata &metadata);
 
@@ -791,6 +801,7 @@ public:
     isminetype IsMine(const CTxIn& txin) const;
     CAmount GetDebit(const CTxIn& txin, const isminefilter& filter) const;
     isminetype IsMine(const CTxOut& txout) const;
+    isminetype IsMine(const CScript& script) const;
     CAmount GetCredit(const CTxOut& txout, const isminefilter& filter) const;
     bool IsChange(const CTxOut& txout) const;
     CAmount GetChange(const CTxOut& txout) const;
