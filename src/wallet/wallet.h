@@ -633,6 +633,10 @@ public:
         fBroadcastTransactions = false;
     }
 
+    std::map<COutPoint, std::pair<CTxOut, isminetype>> mapOutPoints;
+    void UpdateOutPointsIndex();
+    void AddOutPointsToIndex(const CWalletTx& wtx);
+
     std::map<uint256, CWalletTx> mapWallet;
     std::list<CAccountingEntry> laccentries;
 
@@ -791,6 +795,7 @@ public:
     isminetype IsMine(const CTxIn& txin) const;
     CAmount GetDebit(const CTxIn& txin, const isminefilter& filter) const;
     isminetype IsMine(const CTxOut& txout) const;
+    isminetype IsMine(const COutPoint& outpoint) const;
     CAmount GetCredit(const CTxOut& txout, const isminefilter& filter) const;
     bool IsChange(const CTxOut& txout) const;
     CAmount GetChange(const CTxOut& txout) const;
