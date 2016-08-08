@@ -171,6 +171,8 @@ bool CWallet::AddKeyPubKey(const CKey& secret, const CPubKey &pubkey)
     if (HaveWatchOnly(script))
         RemoveWatchOnly(script);
 
+    AddScriptPubKeyToCache(pubkey);
+
     if (!fFileBacked)
         return true;
     if (!IsCrypted()) {
@@ -181,11 +183,21 @@ bool CWallet::AddKeyPubKey(const CKey& secret, const CPubKey &pubkey)
     return true;
 }
 
+bool CWallet::LoadKey(const CKey &key, const CPubKey &pubkey)
+{
+    AddScriptPubKeyToCache(pubkey);
+
+    return CCryptoKeyStore::AddKeyPubKey(key, pubkey);
+}
+
 bool CWallet::AddCryptedKey(const CPubKey &vchPubKey,
                             const vector<unsigned char> &vchCryptedSecret)
 {
     if (!CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret))
         return false;
+
+    AddScriptPubKeyToCache(vchPubKey);
+
     if (!fFileBacked)
         return true;
     {
@@ -209,11 +221,16 @@ bool CWallet::LoadKeyMetadata(const CPubKey &pubkey, const CKeyMetadata &meta)
         nTimeFirstKey = meta.nCreateTime;
 
     mapKeyMetadata[pubkey.GetID()] = meta;
+
+    AddScriptPubKeyToCache(pubkey);
+
     return true;
 }
 
 bool CWallet::LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret)
 {
+    AddScriptPubKeyToCache(vchPubKey);
+
     return CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret);
 }
 
@@ -221,6 +238,9 @@ bool CWallet::AddCScript(const CScript& redeemScript)
 {
     if (!CCryptoKeyStore::AddCScript(redeemScript))
         return false;
+
+    AddScriptToCache(redeemScript);
+
     if (!fFileBacked)
         return true;
     return CWalletDB(strWalletFile).WriteCScript(Hash160(redeemScript), redeemScript);
@@ -239,6 +259,8 @@ bool CWallet::LoadCScript(const CScript& redeemScript)
         return true;
     }
 
+    AddScriptToCache(redeemScript);
+
     return CCryptoKeyStore::AddCScript(redeemScript);
 }
 
@@ -248,6 +270,9 @@ bool CWallet::AddWatchOnly(const CScript &dest)
         return false;
     nTimeFirstKey = 1; // No birthday information for watch-only keys.
     NotifyWatchonlyChanged(true);
+
+    AddScriptToCache(dest);
+
     if (!fFileBacked)
         return true;
     return CWalletDB(strWalletFile).WriteWatchOnly(dest);
@@ -269,6 +294,8 @@ bool CWallet::RemoveWatchOnly(const CScript &dest)
 
 bool CWallet::LoadWatchOnly(const CScript &dest)
 {
+    AddScriptToCache(dest);
+
     return CCryptoKeyStore::AddWatchOnly(dest);
 }
 
@@ -501,6 +528,32 @@ void CWallet::SyncMetaData(pair<TxSpends::iterator, TxSpends::iterator> range)
         copyTo->strFromAccount = copyFrom->strFromAccount;
         // nOrderPos not copied on purpose
         // cached members not copied on purpose
+    }
+}
+
+void CWallet::AddScriptToCache(const CScript &script)
+{
+    mapScriptsCache[script] = ::IsMine(*this, script);
+}
+
+void CWallet::AddScriptPubKeyToCache(const CPubKey &pubkey)
+{
+    AddScriptToCache(GetScriptForRawPubKey(pubkey));
+    AddScriptToCache(GetScriptForDestination(pubkey.GetID()));
+}
+
+void CWallet::RemoveCachedScript(const CScript &script)
+{
+    for (std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.find(script); it != mapScriptsCache.end(); ++it) {
+        mapScriptsCache.erase(it);
+    }
+}
+
+void CWallet::InvalidateCachedScripts()
+{
+    for (std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.begin(); it != mapScriptsCache.end(); ++it)
+    {
+        mapScriptsCache[it->first] = ::IsMine(*this, it->first);
     }
 }
 
@@ -1079,7 +1132,7 @@ CAmount CWallet::GetDebit(const CTxIn &txin, const isminefilter& filter) const
         {
             const CWalletTx& prev = (*mi).second;
             if (txin.prevout.n < prev.vout.size())
-                if (IsMine(prev.vout[txin.prevout.n]) & filter)
+                if (IsMine(prev.vout[txin.prevout.n].scriptPubKey) & filter)
                     return prev.vout[txin.prevout.n].nValue;
         }
     }
@@ -1091,11 +1144,21 @@ isminetype CWallet::IsMine(const CTxOut& txout) const
     return ::IsMine(*this, txout.scriptPubKey);
 }
 
+isminetype CWallet::IsMine(const CScript &script) const
+{
+    const std::map<CScript, isminetype>::const_iterator it = mapScriptsCache.find(script);
+    if (it != mapScriptsCache.end()) {
+        return it->second;
+    }
+
+    return ISMINE_NO;
+}
+
 CAmount CWallet::GetCredit(const CTxOut& txout, const isminefilter& filter) const
 {
     if (!MoneyRange(txout.nValue))
         throw std::runtime_error("CWallet::GetCredit(): value out of range");
-    return ((IsMine(txout) & filter) ? txout.nValue : 0);
+    return ((IsMine(txout.scriptPubKey) & filter) ? txout.nValue : 0);
 }
 
 bool CWallet::IsChange(const CTxOut& txout) const
@@ -1107,7 +1170,7 @@ bool CWallet::IsChange(const CTxOut& txout) const
     // a better way of identifying which outputs are 'the send' and which are
     // 'the change' will need to be implemented (maybe extend CWalletTx to remember
     // which output, if any, was change).
-    if (::IsMine(*this, txout.scriptPubKey))
+    if (IsMine(txout.scriptPubKey))
     {
         CTxDestination address;
         if (!ExtractDestination(txout.scriptPubKey, address))
@@ -1298,7 +1361,7 @@ void CWalletTx::GetAmounts(list<COutputEntry>& listReceived,
     for (unsigned int i = 0; i < vout.size(); ++i)
     {
         const CTxOut& txout = vout[i];
-        isminetype fIsMine = pwallet->IsMine(txout);
+        isminetype fIsMine = pwallet->IsMine(txout.scriptPubKey);
         // Only need to handle txouts if AT LEAST one of these is true:
         //   1) they debit from us (sent)
         //   2) the output is to us (received)
@@ -1667,7 +1730,7 @@ bool CWalletTx::IsTrusted() const
         if (parent == NULL)
             return false;
         const CTxOut& parentOut = parent->vout[txin.prevout.n];
-        if (pwallet->IsMine(parentOut) != ISMINE_SPENDABLE)
+        if (pwallet->IsMine(parentOut.scriptPubKey) != ISMINE_SPENDABLE)
             return false;
     }
     return true;
@@ -1860,9 +1923,11 @@ void CWallet::AvailableCoins(vector<COutput>& vCoins, bool fOnlyConfirmed, const
                 continue;
 
             for (unsigned int i = 0; i < pcoin->vout.size(); i++) {
-                isminetype mine = IsMine(pcoin->vout[i]);
-                if (!(IsSpent(wtxid, i)) && mine != ISMINE_NO &&
-                    !IsLockedCoin((*it).first, i) && (pcoin->vout[i].nValue > 0 || fIncludeZeroValue) &&
+                isminetype mine = IsMine(pcoin->vout[i].scriptPubKey);
+                if (mine != ISMINE_NO &&
+                    (pcoin->vout[i].nValue > 0 || fIncludeZeroValue) &&
+                    !IsLockedCoin((*it).first, i) &&
+                    !(IsSpent(wtxid, i)) &&
                     (!coinControl || !coinControl->HasSelected() || coinControl->fAllowOtherInputs || coinControl->IsSelected(COutPoint((*it).first, i))))
                         vCoins.push_back(COutput(pcoin, i, nDepth,
                                                  ((mine & ISMINE_SPENDABLE) != ISMINE_NO) ||
@@ -2822,7 +2887,7 @@ std::map<CTxDestination, CAmount> CWallet::GetAddressBalances()
             for (unsigned int i = 0; i < pcoin->vout.size(); i++)
             {
                 CTxDestination addr;
-                if (!IsMine(pcoin->vout[i]))
+                if (!IsMine(pcoin->vout[i].scriptPubKey))
                     continue;
                 if(!ExtractDestination(pcoin->vout[i].scriptPubKey, addr))
                     continue;
@@ -2885,7 +2950,7 @@ set< set<CTxDestination> > CWallet::GetAddressGroupings()
 
         // group lone addrs by themselves
         for (unsigned int i = 0; i < pcoin->vout.size(); i++)
-            if (IsMine(pcoin->vout[i]))
+            if (IsMine(pcoin->vout[i].scriptPubKey))
             {
                 CTxDestination address;
                 if(!ExtractDestination(pcoin->vout[i].scriptPubKey, address))
@@ -3409,6 +3474,9 @@ bool CWallet::InitLoadWallet()
             }
         }
     }
+
+    walletInstance->InvalidateCachedScripts();
+
     walletInstance->SetBroadcastTransactions(GetBoolArg("-walletbroadcast", DEFAULT_WALLETBROADCAST));
 
     pwalletMain = walletInstance;
