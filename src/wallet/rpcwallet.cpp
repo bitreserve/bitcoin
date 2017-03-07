@@ -1503,15 +1503,16 @@ UniValue listtransactions(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 4)
+    if (request.fHelp || request.params.size() > 5)
         throw runtime_error(
-            "listtransactions ( \"account\" count skip include_watchonly)\n"
-            "\nReturns up to 'count' most recent transactions skipping the first 'from' transactions for account 'account'.\n"
+            "listtransactions ( \"account\" count skip include_watchonly ascending_order)\n"
+            "\nReturns up to 'count' most recent transactions (if 'ascending_order'=false) skipping the first 'from' transactions for account 'account'.\n"
             "\nArguments:\n"
             "1. \"account\"    (string, optional) DEPRECATED. The account name. Should be \"*\".\n"
             "2. count          (numeric, optional, default=10) The number of transactions to return\n"
             "3. skip           (numeric, optional, default=0) The number of transactions to skip\n"
             "4. include_watchonly (bool, optional, default=false) Include transactions to watch-only addresses (see 'importaddress')\n"
+            "5. ascending_order (bool, optional, default=false) Whether to list by the most recent ('ascending_order'=false) or older transactions ('ascending_order'=true)\n"
             "\nResult:\n"
             "[\n"
             "  {\n"
@@ -1560,7 +1561,9 @@ UniValue listtransactions(const JSONRPCRequest& request)
             "\nList transactions 100 to 120\n"
             + HelpExampleCli("listtransactions", "\"*\" 20 100") +
             "\nAs a json rpc call\n"
-            + HelpExampleRpc("listtransactions", "\"*\", 20, 100")
+            + HelpExampleRpc("listtransactions", "\"*\", 20, 100") +
+            "\nList the first 10 transactions\n"
+            + HelpExampleCli("listtransactions", "\"*\" 10 0 false true")
         );
 
     LOCK2(cs_main, pwallet->cs_wallet);
@@ -1578,6 +1581,9 @@ UniValue listtransactions(const JSONRPCRequest& request)
     if(request.params.size() > 3)
         if(request.params[3].get_bool())
             filter = filter | ISMINE_WATCH_ONLY;
+    bool bAscendingOrder = false;
+    if (request.params.size() > 4)
+        bAscendingOrder = request.params[4].get_bool();
 
     if (nCount < 0)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative count");
@@ -1588,19 +1594,33 @@ UniValue listtransactions(const JSONRPCRequest& request)
 
     const CWallet::TxItems & txOrdered = pwallet->wtxOrdered;
 
-    // iterate backwards until we have nCount items to return:
-    for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend(); ++it)
-    {
-        CWalletTx *const pwtx = (*it).second.first;
-        if (pwtx != 0)
-            ListTransactions(pwallet, *pwtx, strAccount, 0, true, ret, filter);
-        CAccountingEntry *const pacentry = (*it).second.second;
-        if (pacentry != 0)
-            AcentryToJSON(*pacentry, strAccount, ret);
+    CWallet::TxItems::const_iterator txsStart, txsEnd, it;
 
-        if ((int)ret.size() >= (nCount+nFrom)) break;
+    if (!bAscendingOrder) {
+      txsStart = txOrdered.end();
+      txsEnd = txOrdered.begin();
+      it = txOrdered.end();
+    } else {
+      txsStart = txOrdered.begin();
+      txsEnd = txOrdered.end();
+      it = txOrdered.begin();
     }
-    // ret is newest to oldest
+
+    while (it != txsEnd && !((int)ret.size() >= (nCount+nFrom))) {
+      CWalletTx *const pwtx = (*it).second.first;
+      CAccountingEntry *const pacentry = (*it).second.second;
+
+      if (pwtx != 0)
+          ListTransactions(pwallet, *pwtx, strAccount, 0, true, ret, filter);
+      if (pacentry != 0)
+          AcentryToJSON(*pacentry, strAccount, ret);
+
+      if (bAscendingOrder) {
+        it++;
+      } else {
+        it--;
+      }
+    }
 
     if (nFrom > (int)ret.size())
         nFrom = ret.size();
@@ -1617,7 +1637,9 @@ UniValue listtransactions(const JSONRPCRequest& request)
     if (last != arrTmp.end()) arrTmp.erase(last, arrTmp.end());
     if (first != arrTmp.begin()) arrTmp.erase(arrTmp.begin(), first);
 
-    std::reverse(arrTmp.begin(), arrTmp.end()); // Return oldest to newest
+    if (!bAscendingOrder) {
+      std::reverse(arrTmp.begin(), arrTmp.end()); // Return oldest to newest
+    }
 
     ret.clear();
     ret.setArray();

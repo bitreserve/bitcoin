@@ -197,7 +197,13 @@ class ListTransactionsTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].gettransaction(txid_3b)["bip125-replaceable"], "no")
         assert_equal(self.nodes[0].gettransaction(txid_4)["bip125-replaceable"], "unknown")
 
+        # Using `ascendingOrder` option
+        txs = self.nodes[0].listtransactions("*", 9999999, 0, false)
+        firstTxs = self.nodes[0].listtransactions("*", 10, 0, false, true)
+
+        for n in 10:
+            assert_equal(txs[n], firstTxs[n])
+
 
 if __name__ == '__main__':
     ListTransactionsTest().main()
-
