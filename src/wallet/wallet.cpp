@@ -1396,7 +1396,7 @@ int CWalletTx::GetRequestCount() const
 }
 
 void CWalletTx::GetAmounts(std::list<COutputEntry>& listReceived,
-                           std::list<COutputEntry>& listSent, CAmount& nFee, std::string& strSentAccount, const isminefilter& filter) const
+                           std::list<COutputEntry>& listSent, CAmount& nFee, std::string& strSentAccount, const isminefilter& filter, const bool fIncludeChange) const
 {
     nFee = 0;
     listReceived.clear();
@@ -1421,8 +1421,8 @@ void CWalletTx::GetAmounts(std::list<COutputEntry>& listReceived,
         //   2) the output is to us (received)
         if (nDebit > 0)
         {
-            // Don't report 'change' txouts
-            if (pwallet->IsChange(txout))
+            // Don't report 'change' txouts if fIncludeChange is false
+            if (pwallet->IsChange(txout) && !fIncludeChange)
                 continue;
         }
         else if (!(fIsMine & filter))

@@ -1370,14 +1370,14 @@ static void MaybePushAddress(UniValue & entry, const CTxDestination &dest)
         entry.push_back(Pair("address", addr.ToString()));
 }
 
-void ListTransactions(CWallet* const pwallet, const CWalletTx& wtx, const std::string& strAccount, int nMinDepth, bool fLong, UniValue& ret, const isminefilter& filter)
+void ListTransactions(CWallet* const pwallet, const CWalletTx& wtx, const std::string& strAccount, int nMinDepth, bool fLong, UniValue& ret, const isminefilter& filter, const bool fIncludeChange = false)
 {
     CAmount nFee;
     std::string strSentAccount;
     std::list<COutputEntry> listReceived;
     std::list<COutputEntry> listSent;
 
-    wtx.GetAmounts(listReceived, listSent, nFee, strSentAccount, filter);
+    wtx.GetAmounts(listReceived, listSent, nFee, strSentAccount, filter, fIncludeChange);
 
     bool fAllAccounts = (strAccount == std::string("*"));
     bool involvesWatchonly = wtx.IsFromMe(ISMINE_WATCH_ONLY);
@@ -1465,6 +1465,171 @@ void AcentryToJSON(const CAccountingEntry& acentry, const std::string& strAccoun
         entry.push_back(Pair("comment", acentry.strComment));
         ret.push_back(entry);
     }
+}
+
+void QueryTransactions(CWallet* const pwallet, CWalletTx* const pwtx, CAccountingEntry* const pacentry, const isminefilter& filter, bool fIncludeChange, int nMinDepth, UniValue &ret)
+{
+    if (pwtx != 0)
+        ListTransactions(pwallet, *pwtx, "*", nMinDepth, true, ret, filter, fIncludeChange);
+
+    if (pacentry != 0){
+        UniValue entry(UniValue::VOBJ);
+        entry.push_back(Pair("category", "move"));
+        entry.push_back(Pair("time", pacentry->nTime));
+        entry.push_back(Pair("amount", ValueFromAmount(pacentry->nCreditDebit)));
+        entry.push_back(Pair("comment", pacentry->strComment));
+        ret.push_back(entry);
+    }
+}
+
+UniValue querytransactions(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    // Default options
+    bool fAscendingOrder = false;
+    bool fIncludeChange = false;
+    bool fIncludeWatchOnly = false;
+    int nLimit = 10;
+    int nMinDepth = 0;
+    int nOffset = 0;
+
+
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "querytransactions ( options )\n"
+            "\nReturns a list of wallet transactions with several query options\n"
+            "\nArguments:\n"
+            "1. options                     (json, optional)\n"
+            "  {\n"
+            "     \"ascendingOrder\": <false>,  (boolean, optional, default: false) Stating if should return older transactions first\n"
+            "     \"limit\": <limit>,           (numeric, optional, default: 10) The number of transactions to return\n"
+            "     \"offset\": <offset>,         (numeric, optional, default: 0) The number of transactions to skip (for pagination)\n"
+            "     \"includeChange\": <false>    (bool, optional, default=false) Include transactions which involves change addresses\n"
+            "     \"includeWatchOnly\": <false> (bool, optional, default=false) Include transactions to watch-only addresses (see 'importaddress')\n"
+            "     \"minDepth\": <minDepth>      (numeric, optional, default=0) Minimum depth of all transactions\n"
+            "  }\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"address\":\"address\",    (string) The bitcoin address of the transaction. Not present for \n"
+            "                                                move transactions (category = move).\n"
+            "    \"category\":\"send|receive|move\", (string) The transaction category. 'move' is a local (off blockchain)\n"
+            "                                                transaction between accounts, and not associated with an address,\n"
+            "                                                transaction id or block. 'send' and 'receive' transactions are \n"
+            "                                                associated with an address, transaction id and block details\n"
+            "    \"amount\": x.xxx,          (numeric) The amount in " + CURRENCY_UNIT + ". This is negative for the 'send' category, and for the\n"
+            "                                         'move' category for moves outbound. It is positive for the 'receive' category,\n"
+            "                                         and for the 'move' category for inbound funds.\n"
+            "    \"label\": \"label\",       (string) A comment for the address/transaction, if any\n"
+            "    \"vout\": n,                (numeric) the vout value\n"
+            "    \"fee\": x.xxx,             (numeric) The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the \n"
+            "                                         'send' category of transactions.\n"
+            "    \"confirmations\": n,       (numeric) The number of confirmations for the transaction. Available for 'send' and \n"
+            "                                         'receive' category of transactions. Negative confirmations indicate the\n"
+            "                                         transaction conflicts with the block chain\n"
+            "    \"trusted\": xxx,           (bool) Whether we consider the outputs of this unconfirmed transaction safe to spend.\n"
+            "    \"blockhash\": \"hashvalue\", (string) The block hash containing the transaction. Available for 'send' and 'receive'\n"
+            "                                          category of transactions.\n"
+            "    \"blockindex\": n,          (numeric) The index of the transaction in the block that includes it. Available for 'send' and 'receive'\n"
+            "                                          category of transactions.\n"
+            "    \"blocktime\": xxx,         (numeric) The block time in seconds since epoch (1 Jan 1970 GMT).\n"
+            "    \"txid\": \"transactionid\", (string) The transaction id. Available for 'send' and 'receive' category of transactions.\n"
+            "    \"time\": xxx,              (numeric) The transaction time in seconds since epoch (midnight Jan 1 1970 GMT).\n"
+            "    \"timereceived\": xxx,      (numeric) The time received in seconds since epoch (midnight Jan 1 1970 GMT). Available \n"
+            "                                          for 'send' and 'receive' category of transactions.\n"
+            "    \"comment\": \"...\",       (string) If a comment is associated with the transaction.\n"
+            "    \"bip125-replaceable\": \"yes|no|unknown\",  (string) Whether this transaction could be replaced due to BIP125 (replace-by-fee);\n"
+            "                                                     may be unknown for unconfirmed transactions not in the mempool\n"
+            "    \"abandoned\": xxx          (bool) 'true' if the transaction has been abandoned (inputs are respendable). Only available for the \n"
+            "                                         'send' category of transactions.\n"
+            "  }\n"
+            "]\n"
+
+            "\nExamples:\n"
+            "\nList the most recent 10 transactions in the wallet\n"
+            + HelpExampleCli("querytransactions", "") +
+            "\nList the oldest 10 transactions in the wallet\n"
+            + HelpExampleCli("querytransactions", "{\"ascendingOrder\":true}") +
+            "\nList the oldest transactions 100 to 120\n"
+            + HelpExampleCli("querytransactions", "{\"ascendingOrder\":true,\"limit\":20,\"offset\":100}") +
+            "\nAs a json rpc call\n"
+            + HelpExampleRpc("querytransactions", "{\"ascendingOrder\":true,\"limit\":20,\"offset\":100}")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    if (request.params.size() > 0) {
+        const UniValue& options = request.params[0];
+
+        if (options.exists("ascendingOrder"))
+            fAscendingOrder = options["ascendingOrder"].get_bool();
+
+        if (options.exists("limit"))
+            nLimit = options["limit"].get_int();
+
+        if (options.exists("offset"))
+            nOffset = options["offset"].get_int();
+
+        if (options.exists("includeWatchOnly"))
+            fIncludeWatchOnly = options["includeWatchOnly"].get_bool();
+
+        if (options.exists("includeChange"))
+            fIncludeChange = options["includeChange"].get_bool();
+
+        if (options.exists("minDepth"))
+            nMinDepth = options["minDepth"].get_int();
+    }
+
+    if (nLimit < 0)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative limit");
+    if (nMinDepth < 0)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative minimum depth");
+    if (nOffset < 0)
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative offset");
+
+    isminefilter filter = ISMINE_SPENDABLE;
+
+    if (fIncludeWatchOnly)
+        filter = ISMINE_WATCH_ONLY;
+
+    UniValue ret(UniValue::VARR);
+    const CWallet::TxItems & txOrdered = pwallet->wtxOrdered;
+
+    if (fAscendingOrder) {
+        for (CWallet::TxItems::const_iterator it = txOrdered.begin(); it != txOrdered.end() && ((int)ret.size() < (nLimit+nOffset)); ++it)
+            QueryTransactions(pwallet, (*it).second.first, (*it).second.second, filter, fIncludeChange, nMinDepth, ret);
+    } else {
+        for (CWallet::TxItems::const_reverse_iterator it = txOrdered.rbegin(); it != txOrdered.rend() && (int)ret.size() < (nLimit+nOffset); ++it)
+            QueryTransactions(pwallet, (*it).second.first, (*it).second.second, filter, fIncludeChange, nMinDepth, ret);
+    }
+
+    if (nOffset > (int)ret.size())
+        nOffset = ret.size();
+    if ((nOffset + nLimit) > (int)ret.size())
+        nLimit = ret.size() - nOffset;
+
+    std::vector<UniValue> arrTmp = ret.getValues();
+
+    std::vector<UniValue>::iterator first = arrTmp.begin();
+    std::advance(first, nOffset);
+    std::vector<UniValue>::iterator last = arrTmp.begin();
+    std::advance(last, nOffset+nLimit);
+
+    if (last != arrTmp.end()) arrTmp.erase(last, arrTmp.end());
+    if (first != arrTmp.begin()) arrTmp.erase(arrTmp.begin(), first);
+
+    if (!fAscendingOrder)
+        std::reverse(arrTmp.begin(), arrTmp.end()); // Return oldest to newest
+
+    ret.clear();
+    ret.setArray();
+    ret.push_backV(arrTmp);
+
+    return ret;
 }
 
 UniValue listtransactions(const JSONRPCRequest& request)
@@ -2965,6 +3130,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "listsinceblock",           &listsinceblock,           false,  {"blockhash","target_confirmations","include_watchonly"} },
     { "wallet",             "listtransactions",         &listtransactions,         false,  {"account","count","skip","include_watchonly"} },
     { "wallet",             "listunspent",              &listunspent,              false,  {"minconf","maxconf","addresses","include_unsafe","query_options"} },
+    { "wallet",             "querytransactions",        &querytransactions,        false,  {"options"} },
     { "wallet",             "lockunspent",              &lockunspent,              true,   {"unlock","transactions"} },
     { "wallet",             "move",                     &movecmd,                  false,  {"fromaccount","toaccount","amount","minconf","comment"} },
     { "wallet",             "sendfrom",                 &sendfrom,                 false,  {"fromaccount","toaddress","amount","minconf","comment","comment_to"} },

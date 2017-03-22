@@ -65,6 +65,7 @@ BASE_SCRIPTS= [
     'p2p-segwit.py',
     'wallet-dump.py',
     'listtransactions.py',
+    'querytransactions.py',
     # vv Tests less than 60s vv
     'sendheaders.py',
     'zapwallettxes.py',
