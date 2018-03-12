@@ -6,7 +6,6 @@
 #include <wallet/wallet.h>
 
 #include <checkpoints.h>
-#include <chain.h>
 #include <wallet/coincontrol.h>
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
@@ -1607,7 +1606,7 @@ void CWalletTx::GetAmounts(std::list<COutputEntry>& listReceived,
  * @return Earliest timestamp that could be successfully scanned from. Timestamp
  * returned will be higher than startTime if relevant blocks could not be read.
  */
-int64_t CWallet::RescanFromTime(int64_t startTime, const WalletRescanReserver& reserver, bool update)
+int64_t CWallet::RescanFromTime(int64_t startTime, const WalletRescanReserver& reserver, bool update, int64_t timestampWindow)
 {
     // Find starting block. May be null if nCreateTime is greater than the
     // highest blockchain timestamp, in which case there is nothing that needs
@@ -1615,14 +1614,14 @@ int64_t CWallet::RescanFromTime(int64_t startTime, const WalletRescanReserver& r
     CBlockIndex* startBlock = nullptr;
     {
         LOCK(cs_main);
-        startBlock = chainActive.FindEarliestAtLeast(startTime - TIMESTAMP_WINDOW);
+        startBlock = chainActive.FindEarliestAtLeast(startTime - timestampWindow);
         LogPrintf("%s: Rescanning last %i blocks\n", __func__, startBlock ? chainActive.Height() - startBlock->nHeight + 1 : 0);
     }
 
     if (startBlock) {
         const CBlockIndex* const failedBlock = ScanForWalletTransactions(startBlock, nullptr, reserver, update);
         if (failedBlock) {
-            return failedBlock->GetBlockTimeMax() + TIMESTAMP_WINDOW + 1;
+            return failedBlock->GetBlockTimeMax() + timestampWindow + 1;
         }
     }
     return startTime;

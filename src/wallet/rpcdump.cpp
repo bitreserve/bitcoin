@@ -1119,7 +1119,8 @@ UniValue importmulti(const JSONRPCRequest& mainRequest)
             "                                                              key will determine how far back blockchain rescans need to begin for missing wallet transactions.\n"
             "                                                              \"now\" can be specified to bypass scanning, for keys which are known to never have been used, and\n"
             "                                                              0 can be specified to scan the entire blockchain. Blocks up to 2 hours before the earliest key\n"
-            "                                                              creation time of all keys being imported by the importmulti call will be scanned.\n"
+            "                                                              creation time of all keys being imported by the importmulti call will be scanned (the rescan timestamp\n"
+            "                                                              window can be overriden via option \"timestampWindow\").\n"
             "      \"redeemscript\": \"<script>\"                            , (string, optional) Allowed only if the scriptPubKey is a P2SH address or a P2SH scriptPubKey\n"
             "      \"pubkeys\": [\"<pubKey>\", ... ]                         , (array, optional) Array of strings giving pubkeys that must occur in the output or redeemscript\n"
             "      \"keys\": [\"<key>\", ... ]                               , (array, optional) Array of strings giving private keys whose corresponding public keys must occur in the output or redeemscript\n"
@@ -1131,7 +1132,8 @@ UniValue importmulti(const JSONRPCRequest& mainRequest)
             "  ]\n"
             "2. options                 (json, optional)\n"
             "  {\n"
-            "     \"rescan\": <false>,         (boolean, optional, default: true) Stating if should rescan the blockchain after all imports\n"
+            "     \"rescan\",          (boolean, optional, default: true) Stating if should rescan the blockchain after all imports\n"
+            "     \"timestampWindow\", (integer, optional, default: 7200) Override the rescan timestamp window\n"
             "  }\n"
             "\nNote: This call can take minutes to complete if rescan is true, during that time, other rpc calls\n"
             "may report that the imported keys, addresses or scripts exists but related transactions are still missing.\n"
@@ -1139,6 +1141,7 @@ UniValue importmulti(const JSONRPCRequest& mainRequest)
             HelpExampleCli("importmulti", "'[{ \"scriptPubKey\": { \"address\": \"<my address>\" }, \"timestamp\":1455191478 }, "
                                           "{ \"scriptPubKey\": { \"address\": \"<my 2nd address>\" }, \"label\": \"example 2\", \"timestamp\": 1455191480 }]'") +
             HelpExampleCli("importmulti", "'[{ \"scriptPubKey\": { \"address\": \"<my address>\" }, \"timestamp\":1455191478 }]' '{ \"rescan\": false}'") +
+            HelpExampleCli("importmulti", "'[{ \"scriptPubKey\": { \"address\": \"<my address>\" }, \"timestamp\":1455191478 }]' '{ \"rescan\": false, \"timestampWindow\": 0 }'") +
 
             "\nResponse is an array with the same size as the input that has the execution result :\n"
             "  [{ \"success\": true } , { \"success\": false, \"error\": { \"code\": -1, \"message\": \"Internal Server Error\"} }, ... ]\n");
@@ -1151,12 +1154,22 @@ UniValue importmulti(const JSONRPCRequest& mainRequest)
 
     //Default options
     bool fRescan = true;
+    int64_t timestampWindow = TIMESTAMP_WINDOW;
 
     if (!mainRequest.params[1].isNull()) {
         const UniValue& options = mainRequest.params[1];
 
         if (options.exists("rescan")) {
             fRescan = options["rescan"].get_bool();
+        }
+
+        if (options.exists("timestampWindow")) {
+            timestampWindow = options["timestampWindow"].get_int64();
+
+            // Prevent negative "timestampWindow".
+            if (timestampWindow < 0) {
+                timestampWindow = 0;
+            }
         }
     }
 
@@ -1208,7 +1221,7 @@ UniValue importmulti(const JSONRPCRequest& mainRequest)
         }
     }
     if (fRescan && fRunScan && requests.size()) {
-        int64_t scannedTime = pwallet->RescanFromTime(nLowestTimestamp, reserver, true /* update */);
+        int64_t scannedTime = pwallet->RescanFromTime(nLowestTimestamp, reserver, true /* update */, timestampWindow);
         pwallet->ReacceptWalletTransactions();
 
         if (scannedTime > nLowestTimestamp) {
