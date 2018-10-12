@@ -252,6 +252,21 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(self.nodes[0].getwalletinfo()["unconfirmed_balance"], 1)
         assert_equal(self.nodes[0].getunconfirmedbalance(), 1)
 
+        # Fix for `listunspent` when passing:
+        # 1. an non-empty array of addresses and passing the query_options property `maximumCount`
+        #   with a value lower than the smallest index of the filtered unspents (by the passed addresses and the other query options)
+        unspent_txs = self.nodes[1].listunspent()
+
+        for uTx in unspent_txs:
+          if uTx['address'] != unspent_txs[0]['address']:
+            utxo = uTx
+            break
+
+        assert(len(self.nodes[1].listunspent(addresses=[utxo['address']])) > 0)
+        assert(len(self.nodes[1].listunspent(addresses=[utxo['address']], query_options={'maximumCount': 0})) > 0)
+        assert(len(self.nodes[1].listunspent(addresses=[utxo['address']], query_options={'maximumCount': 1})) > 0)
+        assert(len(self.nodes[1].listunspent(addresses=[utxo['address']], query_options={'maximumCount': len(unspent_txs)})) > 0)
+
         # check if we can list zero value tx as available coins
         # 1. create raw_tx
         # 2. hex-changed one output to 0.0
