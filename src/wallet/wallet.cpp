@@ -2148,7 +2148,7 @@ CAmount CWallet::GetAvailableBalance(const CCoinControl* coinControl) const
     return balance;
 }
 
-void CWallet::AvailableCoins(std::vector<COutput> &vCoins, bool fOnlySafe, const CCoinControl *coinControl, const CAmount &nMinimumAmount, const CAmount &nMaximumAmount, const CAmount &nMinimumSumAmount, const uint64_t nMaximumCount, const int nMinDepth, const int nMaxDepth) const
+void CWallet::AvailableCoins(std::vector<COutput> &vCoins, bool fOnlySafe, const CCoinControl *coinControl, const CAmount &nMinimumAmount, const CAmount &nMaximumAmount, const CAmount &nMinimumSumAmount, const uint64_t nMaximumCount, const int nMinDepth, const int nMaxDepth, const std::set<CTxDestination> *destinations) const
 {
     AssertLockHeld(cs_main);
     AssertLockHeld(cs_wallet);
@@ -2233,6 +2233,15 @@ void CWallet::AvailableCoins(std::vector<COutput> &vCoins, bool fOnlySafe, const
 
             if (mine == ISMINE_NO) {
                 continue;
+            }
+
+            // Filter by destination.
+            if (destinations && destinations->size()) {
+                CTxDestination address;
+                bool fValidAddress = ExtractDestination(pcoin->tx->vout[i].scriptPubKey, address);
+
+                if (!fValidAddress || !destinations->count(address))
+                    continue;
             }
 
             bool solvable = IsSolvable(*this, pcoin->tx->vout[i].scriptPubKey);
